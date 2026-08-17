@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { CountryGrid } from "./components/CountryGrid";
 import { Header } from "./components/Header";
 import { Message } from "./components/Message";
 import { MessageComposer } from "./components/MessageComposer";
@@ -8,381 +9,318 @@ import { MobileNavigation } from "./components/MobileNavigation";
 import { ProfileCard } from "./components/ProfileCard";
 import { ProfileSetup } from "./components/ProfileSetup";
 import { Sidebar } from "./components/Sidebar";
+import { COUNTRIES, DEFAULT_PROFILE, SEED_MESSAGES } from "./lib/data";
+import type { CountryEntry, MessageItem, Profile, ProfileForm } from "./lib/types";
 
-type Profile = {
-  name: string;
-  username: string;
-  avatar: string;
-  bio?: string;
-  location?: string;
-  website?: string;
-  joinedAt?: string;
+const STORAGE = {
+  profile: "tf-profile-v2",
+  messages: "tf-messages-v2",
 };
 
-type MessageItem = {
-  id: string;
-  content: string;
-  timestamp: string;
-  reactions: Record<string, number>;
-  author: Profile;
-};
+function getInitials(name: string) {
+  return name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase() || "GF";
+}
 
-type ProfileForm = {
-  photo: string;
-  fullName: string;
-  username: string;
-  bio: string;
-  location: string;
-  website: string;
-};
-
-const STORAGE_KEYS = {
-  profile: "greek-founders-profile",
-  messages: "greek-founders-messages",
-};
-
-const getInitials = (name: string) =>
-  name
-    .split(" ")
-    .map((part) => part[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
-
-const currentUserProfile: Profile = {
-  name: "Nikos Papadopoulos",
-  username: "nikos",
-  avatar: "NP",
-  bio: "Founder & entrepreneur",
-  location: "Athens, Greece",
-  website: "nikospapadopoulos.com",
-  joinedAt: "Joined May 2025",
-};
-
-const sampleMessages: MessageItem[] = [
-  {
-    id: "1",
-    author: {
-      name: "Nikos Papadopoulos",
-      username: "nikos",
-      avatar: "NP",
-      bio: "Founder & entrepreneur",
-      location: "Athens, Greece",
-      website: "nikospapadopoulos.com",
-      joinedAt: "Joined May 2025",
-    },
-    content: "Καλησπέρα σε όλους! 👋 Is anyone here building something in AI?",
-    timestamp: "9:12 AM",
-    reactions: { "👍": 6, "🔥": 2, "🎉": 1, "💡": 4 },
-  },
-  {
-    id: "2",
-    author: {
-      name: "Maria Georgiou",
-      username: "maria",
-      avatar: "MG",
-      bio: "AI product builder",
-      location: "Heraklion, Greece",
-      website: "mariageorgiou.io",
-      joinedAt: "Joined April 2025",
-    },
-    content: "Yes! I'm working on an AI tool for Greek hotels. Would love to connect with other founders.",
-    timestamp: "9:14 AM",
-    reactions: { "👍": 11, "🔥": 4, "🎉": 2, "💡": 8 },
-  },
-  {
-    id: "3",
-    author: {
-      name: "Giorgos",
-      username: "giorgos",
-      avatar: "G",
-      bio: "Building e-commerce products",
-      location: "Thessaloniki, Greece",
-      website: "giorgos.dev",
-      joinedAt: "Joined January 2025",
-    },
-    content: "Nice! I'm working on an e-commerce startup in Thessaloniki 🚀",
-    timestamp: "9:18 AM",
-    reactions: { "👍": 9, "🔥": 3, "🎉": 5, "💡": 2 },
-  },
-  {
-    id: "4",
-    author: {
-      name: "Elena Kostopoulou",
-      username: "elena",
-      avatar: "EK",
-      bio: "Product strategist",
-      location: "Patras, Greece",
-      website: "elenakost.com",
-      joinedAt: "Joined March 2025",
-    },
-    content: "Would love to hear more about the AI hotel workflow. Anyone open to a quick intro call?",
-    timestamp: "9:20 AM",
-    reactions: { "👍": 5, "🔥": 1, "🎉": 0, "💡": 6 },
-  },
-];
-
-const defaultForm: ProfileForm = {
-  photo: "",
-  fullName: currentUserProfile.name,
-  username: currentUserProfile.username,
-  bio: currentUserProfile.bio ?? "",
-  location: currentUserProfile.location ?? "",
-  website: currentUserProfile.website ?? "",
-};
+function makeEmptyForm(p?: Profile): ProfileForm {
+  return {
+    photo: p?.avatar?.startsWith("data:image") ? p.avatar : "",
+    fullName: p?.name ?? "",
+    username: p?.username ?? "",
+    bio: p?.bio ?? "",
+    location: p?.location ?? "",
+    website: p?.website ?? "",
+    twitter: p?.twitter ?? "",
+    linkedin: p?.linkedin ?? "",
+    github: p?.github ?? "",
+    country: p?.country ?? "Greece",
+  };
+}
 
 export default function Home() {
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [messages, setMessages] = useState<MessageItem[]>(sampleMessages);
+  const [messages, setMessages] = useState<MessageItem[]>(SEED_MESSAGES);
+  const [countries, setCountries] = useState<CountryEntry[]>(COUNTRIES);
   const [draft, setDraft] = useState("");
+  const [draftImage, setDraftImage] = useState("");
+  const [draftLinks, setDraftLinks] = useState<string[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<Profile | null>(null);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
-  const [form, setForm] = useState<ProfileForm>(defaultForm);
-  const endOfMessagesRef = useRef<HTMLDivElement | null>(null);
+  const [isNewUser, setIsNewUser] = useState(false);
+  const [form, setForm] = useState<ProfileForm>(makeEmptyForm());
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState("chat");
+  const endRef = useRef<HTMLDivElement | null>(null);
 
+  // Load from localStorage on mount
   useEffect(() => {
     try {
-      const storedProfile = localStorage.getItem(STORAGE_KEYS.profile);
-      const storedMessages = localStorage.getItem(STORAGE_KEYS.messages);
-
-      if (storedProfile) {
-        const parsedProfile = JSON.parse(storedProfile) as Partial<Profile>;
-        const normalizedProfile: Profile = {
-          name: parsedProfile.name ?? currentUserProfile.name,
-          username: parsedProfile.username ?? currentUserProfile.username,
-          avatar: parsedProfile.avatar ?? currentUserProfile.avatar,
-          bio: parsedProfile.bio ?? currentUserProfile.bio ?? "",
-          location: parsedProfile.location ?? currentUserProfile.location ?? "",
-          website: parsedProfile.website ?? currentUserProfile.website ?? "",
-          joinedAt: parsedProfile.joinedAt ?? currentUserProfile.joinedAt,
-        };
-
-        setProfile(normalizedProfile);
-        setForm({
-          photo: normalizedProfile.avatar.startsWith("data:image") ? normalizedProfile.avatar : "",
-          fullName: normalizedProfile.name,
-          username: normalizedProfile.username,
-          bio: normalizedProfile.bio ?? "",
-          location: normalizedProfile.location ?? "",
-          website: normalizedProfile.website ?? "",
-        });
+      const stored = localStorage.getItem(STORAGE.profile);
+      if (stored) {
+        const p = JSON.parse(stored) as Profile;
+        setProfile(p);
+        setForm(makeEmptyForm(p));
+      } else {
+        setIsNewUser(true);
+        setShowSetup(true);
       }
-
-      if (storedMessages) {
-        setMessages(JSON.parse(storedMessages));
-      }
+      const storedMsgs = localStorage.getItem(STORAGE.messages);
+      if (storedMsgs) setMessages(JSON.parse(storedMsgs));
     } catch {
-      setProfile(null);
-      setForm(defaultForm);
+      setIsNewUser(true);
+      setShowSetup(true);
     }
   }, []);
 
+  // Persist profile
   useEffect(() => {
-    if (profile) {
-      localStorage.setItem(STORAGE_KEYS.profile, JSON.stringify(profile));
-    }
+    if (profile) localStorage.setItem(STORAGE.profile, JSON.stringify(profile));
   }, [profile]);
 
+  // Persist messages
   useEffect(() => {
-    if (messages.length > 0) {
-      localStorage.setItem(STORAGE_KEYS.messages, JSON.stringify(messages));
-    }
+    if (messages.length > 0) localStorage.setItem(STORAGE.messages, JSON.stringify(messages));
   }, [messages]);
 
+  // Scroll to bottom on new message
   useEffect(() => {
-    endOfMessagesRef.current?.scrollIntoView({ behavior: "smooth" });
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const handleFieldChange = (field: string, value: string) => {
-    setForm((previous) => ({ ...previous, [field]: value }));
-  };
+  const handleFieldChange = (field: string, value: string) =>
+    setForm((prev) => ({ ...prev, [field]: value }));
 
   const handlePhotoUpload = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-
     const reader = new FileReader();
     reader.onload = () => {
-      const result = typeof reader.result === "string" ? reader.result : "";
-      setForm((previous) => ({ ...previous, photo: result }));
+      if (typeof reader.result === "string")
+        setForm((prev) => ({ ...prev, photo: reader.result as string }));
     };
     reader.readAsDataURL(file);
   };
 
-  const handleCreateProfile = () => {
-    const name = form.fullName.trim() || currentUserProfile.name;
-    const username = form.username.trim() || currentUserProfile.username;
+  const handleSaveProfile = () => {
+    const name = form.fullName.trim() || DEFAULT_PROFILE.name;
+    const username = form.username.trim() || DEFAULT_PROFILE.username;
     const avatar = form.photo || getInitials(name);
 
-    const nextProfile: Profile = {
+    const next: Profile = {
       name,
       username,
       avatar,
-      bio: form.bio.trim() || "Founder building in Greece.",
-      location: form.location.trim() || "Athens, Greece",
-      website: form.website.trim() || "yourwebsite.com",
-      joinedAt: `Joined ${new Date().toLocaleDateString("en-US", {
-        month: "long",
-        year: "numeric",
-      })}`,
+      bio: form.bio.trim(),
+      location: form.location.trim(),
+      website: form.website.trim(),
+      twitter: form.twitter.trim(),
+      linkedin: form.linkedin.trim(),
+      github: form.github.trim(),
+      country: form.country || "Greece",
+      joinedAt: profile?.joinedAt ?? `Joined ${new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" })}`,
+      profileViews: profile?.profileViews ?? 0,
+      followers: profile?.followers ?? 0,
     };
 
-    const formState: ProfileForm = {
-      photo: form.photo,
-      fullName: name,
-      username,
-      bio: nextProfile.bio ?? "Founder building in Greece.",
-      location: nextProfile.location ?? "Athens, Greece",
-      website: nextProfile.website ?? "yourwebsite.com",
-    };
-
-    setProfile(nextProfile);
-    setForm(formState);
+    setProfile(next);
+    setForm(makeEmptyForm(next));
     setShowSetup(false);
+    setIsNewUser(false);
   };
 
   const handleSendMessage = () => {
-    if (!draft.trim() || !profile) return;
+    if ((!draft.trim() && !draftImage && draftLinks.length === 0) || !profile) return;
 
-    const message: MessageItem = {
+    const msg: MessageItem = {
       id: `${Date.now()}`,
       author: profile,
-      content: draft.trim(),
-      timestamp: "Just now",
+      content: draft.trim() || "Shared an update.",
+      timestamp: new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }),
+      image: draftImage || undefined,
+      links: draftLinks.length > 0 ? draftLinks : undefined,
       reactions: { "👍": 0, "🔥": 0, "🎉": 0, "💡": 0 },
     };
 
-    setMessages((previous) => [...previous, message]);
+    setMessages((prev) => [...prev, msg]);
     setDraft("");
+    setDraftImage("");
+    setDraftLinks([]);
   };
 
-  const handleReact = (messageId: string, reaction: string) => {
-    setMessages((previous) =>
-      previous.map((message) => {
-        if (message.id !== messageId) return message;
-
-        return {
-          ...message,
-          reactions: {
-            ...message.reactions,
-            [reaction]: (message.reactions[reaction] ?? 0) + 1,
-          },
-        };
-      }),
+  const handleReact = (id: string, reaction: string) => {
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id !== id ? m : { ...m, reactions: { ...m.reactions, [reaction]: (m.reactions[reaction] ?? 0) + 1 } }
+      )
     );
   };
 
-  if (!profile && !showSetup) {
-    return (
-      <ProfileSetup
-        form={form}
-        onFieldChange={handleFieldChange}
-        onPhotoUpload={handlePhotoUpload}
-        onSubmit={handleCreateProfile}
-      />
-    );
-  }
+  const handleDraftPhoto = (file?: File) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") setDraftImage(reader.result);
+    };
+    reader.readAsDataURL(file);
+  };
 
-  if (showSetup && profile) {
-    return (
-      <ProfileSetup
-        form={form}
-        onFieldChange={handleFieldChange}
-        onPhotoUpload={handlePhotoUpload}
-        onSubmit={handleCreateProfile}
-      />
+  const handleAddLink = (url: string) => {
+    const normalized = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+    setDraftLinks((prev) => prev.includes(normalized) ? prev : [...prev, normalized]);
+  };
+
+  const handleJoinWaitlist = (country: string) => {
+    setCountries((prev) =>
+      prev.map((c) => c.country === country ? { ...c, current: c.current + 1 } : c)
     );
-  }
+  };
+
+  const totalWaitlist = countries.filter((c) => c.status === "waitlist").reduce((s, c) => s + c.current, 0);
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900">
-      <div className="flex h-screen overflow-hidden bg-[#f8fafc]">
-        <Sidebar profile={profile} />
+    <div className="flex h-screen overflow-hidden bg-[#f8fafc]">
+      <Sidebar
+        profile={profile}
+        onEditProfile={() => setShowSetup(true)}
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+      />
 
-        <div className="relative flex min-w-0 flex-1 flex-col bg-[#f8fafc]">
-          <div className="lg:hidden">
-            <MobileNavigation
-              menuOpen={mobileMenuOpen}
-              onToggleMenu={() => setMobileMenuOpen((previous) => !previous)}
-            />
-          </div>
-
-          {mobileMenuOpen && (
-            <div className="fixed inset-0 z-30 bg-slate-950/35 lg:hidden">
-              <div className="h-full w-[80%] max-w-xs bg-[#0b1220] p-4 text-slate-100 shadow-xl">
-                <div className="mb-6 flex items-center gap-3 border-b border-slate-800 pb-4">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/20 text-lg">🇬🇷</div>
-                  <span className="font-semibold">Greek Founders</span>
-                </div>
-                <div className="space-y-2">
-                  {[
-                    "Community Chat",
-                    "Members",
-                    "Settings",
-                  ].map((item, index) => (
-                    <button
-                      key={item}
-                      type="button"
-                      onClick={() => setMobileMenuOpen(false)}
-                      className={[
-                        "flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm font-medium",
-                        index === 0 ? "bg-slate-800 text-white" : "text-slate-300",
-                      ].join(" ")}
-                    >
-                      <span>{index === 0 ? "💬" : index === 1 ? "👥" : "⚙️"}</span>
-                      {item}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          <Header
-            title="Greek Founders"
-            subtitle="The community for people building in Greece"
-            onlineLabel="Online"
+      <div className="relative flex min-w-0 flex-1 flex-col">
+        {/* Mobile nav */}
+        <div className="lg:hidden">
+          <MobileNavigation
+            menuOpen={mobileMenuOpen}
+            onToggleMenu={() => setMobileMenuOpen((v) => !v)}
           />
+        </div>
 
-          <div className="flex justify-end border-b border-slate-200 bg-white px-4 py-2 sm:px-6">
-            <button
-              type="button"
-              onClick={() => setShowSetup(true)}
-              className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
-            >
-              Edit profile
-            </button>
+        {/* Mobile menu overlay */}
+        {mobileMenuOpen && (
+          <div className="fixed inset-0 z-30 bg-slate-950/40 lg:hidden" onClick={() => setMobileMenuOpen(false)}>
+            <div className="h-full w-72 max-w-[80vw] bg-[#0b1220] p-4 text-slate-100 shadow-xl" onClick={(e) => e.stopPropagation()}>
+              <div className="mb-5 flex items-center justify-between border-b border-slate-800 pb-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">🇬🇷</span>
+                  <span className="font-semibold">The Founders</span>
+                </div>
+                <button onClick={() => setMobileMenuOpen(false)} className="text-slate-400">✕</button>
+              </div>
+              <div className="space-y-1">
+                {[
+                  { id: "chat", label: "Community Chat", icon: "💬" },
+                  { id: "countries", label: "Countries", icon: "🌍" },
+                  { id: "members", label: "Members", icon: "👥" },
+                ].map((item) => (
+                  <button key={item.id} type="button" onClick={() => { setActiveTab(item.id); setMobileMenuOpen(false); }}
+                    className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium ${activeTab === item.id ? "bg-slate-800 text-white" : "text-slate-400"}`}>
+                    <span>{item.icon}</span>{item.label}
+                  </button>
+                ))}
+              </div>
+              <button onClick={() => { setShowSetup(true); setMobileMenuOpen(false); }}
+                className="mt-6 w-full rounded-xl border border-slate-700 py-2.5 text-sm text-slate-300 hover:bg-slate-800">
+                ✏️ Edit profile
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Header */}
+        <Header
+          title="The Founders"
+          subtitle="The global network for country-based founder communities"
+          onlineLabel="Greece Live"
+        />
+
+        {/* Stats bar */}
+        <div className="border-b border-slate-200 bg-white px-4 py-3 sm:px-6">
+          <div className="flex flex-wrap gap-6">
+            {[
+              { label: "Members", value: "2,310", sub: "+18% this month", color: "text-emerald-600" },
+              { label: "Waitlist", value: totalWaitlist.toLocaleString(), sub: "Across 5 countries", color: "text-amber-600" },
+              { label: "Countries", value: "1 live", sub: "5 coming soon", color: "text-blue-600" },
+            ].map(({ label, value, sub, color }) => (
+              <div key={label}>
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">{label}</p>
+                <p className="text-lg font-bold text-slate-900">{value}</p>
+                <p className={`text-xs ${color}`}>{sub}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Main content */}
+        <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div className="flex-1 overflow-y-auto px-3 py-4 sm:px-5 lg:px-6">
+            <div className="mx-auto max-w-3xl space-y-4">
+
+              {/* Countries tab */}
+              {activeTab === "countries" && (
+                <CountryGrid countries={countries} onJoinWaitlist={handleJoinWaitlist} />
+              )}
+
+              {/* Members tab */}
+              {activeTab === "members" && (
+                <div className="rounded-3xl border border-slate-200 bg-white p-6 text-center shadow-sm">
+                  <p className="text-3xl">👥</p>
+                  <p className="mt-3 font-semibold text-slate-800">Members directory coming soon</p>
+                  <p className="mt-1 text-sm text-slate-500">Browse all 2,310 founders in the Greece community.</p>
+                </div>
+              )}
+
+              {/* Chat tab */}
+              {activeTab === "chat" && (
+                <>
+                  {/* Country cards pinned above chat */}
+                  <CountryGrid countries={countries} onJoinWaitlist={handleJoinWaitlist} />
+
+                  {/* Messages */}
+                  <div className="rounded-3xl border border-slate-200 bg-white shadow-sm">
+                    <div className="border-b border-slate-100 px-5 py-4">
+                      <p className="text-sm font-semibold text-slate-800">🇬🇷 Greece — Community Chat</p>
+                      <p className="text-xs text-slate-500">Open to all Greek founders</p>
+                    </div>
+                    <div className="divide-y divide-slate-100 px-2 py-2">
+                      {messages.map((msg) => (
+                        <Message key={msg.id} message={msg} onOpenProfile={setSelectedProfile} onReact={handleReact} />
+                      ))}
+                      <div ref={endRef} />
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
 
-          <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <div className="flex-1 overflow-y-auto px-2 py-4 sm:px-4 lg:px-6">
-              <div className="mx-auto max-w-4xl space-y-2">
-                {messages.map((message) => (
-                  <Message
-                    key={message.id}
-                    message={message}
-                    onOpenProfile={setSelectedProfile}
-                    onReact={handleReact}
-                  />
-                ))}
-                <div ref={endOfMessagesRef} />
-              </div>
-            </div>
-
+          {/* Composer — only shown in chat */}
+          {activeTab === "chat" && (
             <MessageComposer
               value={draft}
               onChange={setDraft}
               onSubmit={handleSendMessage}
+              onAttachPhoto={handleDraftPhoto}
+              onAddLink={handleAddLink}
+              draftImage={draftImage}
+              draftLinks={draftLinks}
+              authorAvatar={profile?.avatar}
             />
-          </main>
-        </div>
+          )}
+        </main>
       </div>
 
+      {/* Profile card modal */}
       {selectedProfile && (
-        <ProfileCard
-          profile={selectedProfile}
-          onClose={() => setSelectedProfile(null)}
+        <ProfileCard profile={selectedProfile} onClose={() => setSelectedProfile(null)} />
+      )}
+
+      {/* Profile setup modal */}
+      {showSetup && (
+        <ProfileSetup
+          form={form}
+          onFieldChange={handleFieldChange}
+          onPhotoUpload={handlePhotoUpload}
+          onSubmit={handleSaveProfile}
+          onClose={isNewUser ? undefined : () => setShowSetup(false)}
         />
       )}
     </div>

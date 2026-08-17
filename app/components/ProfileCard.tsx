@@ -1,79 +1,107 @@
-type Profile = {
-  name: string;
-  username: string;
-  avatar: string;
-  bio?: string;
-  location?: string;
-  website?: string;
-  joinedAt?: string;
-};
+import type { Profile } from "../lib/types";
 
 type ProfileCardProps = {
   profile: Profile;
   onClose: () => void;
 };
 
+function normalizeUrl(url: string) {
+  return /^https?:\/\//i.test(url) ? url : `https://${url}`;
+}
+
+function hostname(url: string) {
+  try { return new URL(normalizeUrl(url)).hostname.replace("www.", ""); }
+  catch { return url; }
+}
+
 export function ProfileCard({ profile, onClose }: ProfileCardProps) {
+  const links = [
+    profile.website && { label: hostname(profile.website), href: normalizeUrl(profile.website), icon: "🌐" },
+    profile.linkedin && { label: "LinkedIn", href: normalizeUrl(profile.linkedin), icon: "in" },
+    profile.twitter && { label: "X", href: normalizeUrl(profile.twitter), icon: "𝕏" },
+    profile.github && { label: "GitHub", href: normalizeUrl(profile.github), icon: "⌥" },
+  ].filter(Boolean) as { label: string; href: string; icon: string }[];
+
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/35 p-3 sm:items-center sm:p-6">
-      <div className="w-full max-w-md overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-[0_30px_80px_rgba(15,23,42,0.26)] sm:rounded-[32px]">
-        <div className="flex items-center justify-end border-b border-slate-100 px-4 py-3">
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/40 p-3 backdrop-blur-sm sm:items-center sm:p-6"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-sm overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-[0_40px_100px_rgba(15,23,42,0.25)]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Cover + avatar */}
+        <div className="relative h-24 bg-gradient-to-r from-blue-600 to-indigo-600">
           <button
-            type="button"
             onClick={onClose}
-            className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-sm text-slate-600 transition hover:bg-slate-200"
-            aria-label="Close profile"
-          >
-            ✕
-          </button>
+            className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-sm text-white backdrop-blur-sm hover:bg-white/30"
+          >✕</button>
+          <div className="absolute -bottom-10 left-6">
+            <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-2xl border-4 border-white bg-gradient-to-br from-blue-400 to-indigo-600 text-xl font-bold text-white shadow-lg">
+              {profile.avatar?.startsWith("data:image")
+                ? <img src={profile.avatar} alt={profile.name} className="h-full w-full object-cover" />
+                : profile.avatar}
+            </div>
+          </div>
         </div>
 
-        <div className="p-6">
-          <div className="flex justify-center">
-            <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-xl font-bold text-white shadow-lg shadow-blue-500/30">
-              {profile.avatar?.startsWith("data:image") ? (
-                <img src={profile.avatar} alt={profile.name} className="h-full w-full object-cover" />
-              ) : (
-                profile.avatar
-              )}
+        <div className="px-6 pb-6 pt-14">
+          {/* Name + username */}
+          <div>
+            <h3 className="text-xl font-bold text-slate-900">{profile.name}</h3>
+            <p className="text-sm text-slate-500">@{profile.username}</p>
+          </div>
+
+          {/* Bio */}
+          {profile.bio && (
+            <p className="mt-3 text-sm leading-relaxed text-slate-700">{profile.bio}</p>
+          )}
+
+          {/* Meta */}
+          <div className="mt-4 flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-slate-500">
+            {profile.location && <span>📍 {profile.location}</span>}
+            {profile.country && <span>🌍 {profile.country}</span>}
+            {profile.joinedAt && <span>🗓 {profile.joinedAt}</span>}
+          </div>
+
+          {/* Stats */}
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3 text-center">
+              <p className="text-lg font-bold text-slate-900">{(profile.profileViews ?? 0).toLocaleString()}</p>
+              <p className="text-[10px] uppercase tracking-widest text-slate-500">Profile views</p>
+            </div>
+            <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3 text-center">
+              <p className="text-lg font-bold text-slate-900">{(profile.followers ?? 0).toLocaleString()}</p>
+              <p className="text-[10px] uppercase tracking-widest text-slate-500">Followers</p>
             </div>
           </div>
 
-          <div className="mt-5 text-center">
-            <h3 className="text-2xl font-semibold text-slate-900">{profile.name}</h3>
-            <p className="mt-1 text-sm text-slate-500">@{profile.username}</p>
-          </div>
-
-          <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-            <p className="font-medium text-slate-900">{profile.bio ?? "Founder & entrepreneur"}</p>
-            <div className="mt-4 space-y-3">
-              <p className="flex items-center gap-2">
-                <span>📍</span>
-                <span>{profile.location ?? "Athens, Greece"}</span>
-              </p>
-              <p className="flex items-center gap-2">
-                <span>🗓️</span>
-                <span>{profile.joinedAt ?? "Joined Greek Founders"}</span>
-              </p>
-              <p className="flex items-center gap-2">
-                <span>🌐</span>
-                <span>{profile.website ?? "nikospapadopoulos.com"}</span>
-              </p>
+          {/* Links */}
+          {links.length > 0 && (
+            <div className="mt-4">
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-slate-400">Links</p>
+              <div className="flex flex-wrap gap-2">
+                {links.map((link) => (
+                  <a key={link.href} href={link.href} target="_blank" rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-blue-300 hover:text-blue-600">
+                    <span className="text-[11px]">{link.icon}</span>
+                    {link.label}
+                  </a>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
-          <div className="mt-6 grid grid-cols-2 gap-3">
-            <button
-              type="button"
-              className="rounded-2xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-[0_16px_30px_rgba(37,99,235,0.26)] transition hover:bg-blue-500"
-            >
+          {/* Actions */}
+          <div className="mt-5 grid grid-cols-2 gap-3">
+            <button type="button"
+              className="rounded-2xl bg-blue-600 py-3 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(37,99,235,0.26)] transition hover:bg-blue-500">
               Message
             </button>
-            <button
-              type="button"
-              className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
-            >
-              View Profile
+            <button type="button"
+              className="rounded-2xl border border-slate-200 bg-white py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50">
+              Follow
             </button>
           </div>
         </div>
