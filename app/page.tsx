@@ -64,13 +64,15 @@ function rowToMessage(row: Record<string, unknown>): MessageItem {
 
 export default function Home() {
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [messages, setMessages] = useState<MessageItem[]>(SEED_MESSAGES);
+  const [messages, setMessages] = useState<MessageItem[]>([]);        // empty — load from Supabase
+  const [messagesLoaded, setMessagesLoaded] = useState(false);        // show loading state
   const [countries] = useState<CountryEntry[]>(COUNTRIES);
   const [draft, setDraft] = useState("");
   const [draftImage, setDraftImage] = useState("");
   const [draftLinks, setDraftLinks] = useState<string[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<Profile | null>(null);
-  const [showSetup, setShowSetup] = useState(false);
+  const [showSetup, setShowSetup] = useState(false);                  // false until localStorage checked
+  const [profileLoaded, setProfileLoaded] = useState(false);          // prevent flash
   const [isNewUser, setIsNewUser] = useState(false);
   const [form, setForm] = useState<ProfileForm>(makeEmptyForm());
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -80,7 +82,7 @@ export default function Home() {
   );
   const endRef = useRef<HTMLDivElement | null>(null);
 
-  // Load profile from localStorage
+  // Load profile from localStorage — runs once, never shows setup if profile exists
   useEffect(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
@@ -88,14 +90,16 @@ export default function Home() {
         const p = JSON.parse(stored) as Profile;
         setProfile(p);
         setForm(makeEmptyForm(p));
+        // profile exists — never show setup automatically
       } else {
         setIsNewUser(true);
-        setShowSetup(true);
+        setShowSetup(true);   // only show setup for brand new visitors
       }
     } catch {
       setIsNewUser(true);
       setShowSetup(true);
     }
+    setProfileLoaded(true);
   }, []);
 
   // Persist profile
@@ -112,10 +116,13 @@ export default function Home() {
         .order("created_at", { ascending: true })
         .limit(100);
 
-      if (!error && data && data.length > 0) {
-        setMessages(data.map(rowToMessage));
+      if (!error && data) {
+        // Use real messages if any exist, otherwise show seed messages as starter content
+        setMessages(data.length > 0 ? data.map(rowToMessage) : SEED_MESSAGES);
+      } else {
+        setMessages(SEED_MESSAGES);
       }
-      // If table is empty, SEED_MESSAGES stay as default
+      setMessagesLoaded(true);
     }
 
     loadMessages();
