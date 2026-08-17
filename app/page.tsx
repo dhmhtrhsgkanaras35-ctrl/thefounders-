@@ -236,7 +236,7 @@ export default function Home() {
     setDraftLinks([]);
 
     // Persist to Supabase
-    await supabase.from("messages").insert({
+    const { error: insertError } = await supabase.from("messages").insert({
       content,
       image: draftImage || null,
       links: draftLinks.length > 0 ? draftLinks : null,
@@ -253,6 +253,7 @@ export default function Home() {
       author_country: profile.country ?? null,
       author_joined_at: profile.joinedAt ?? null,
     });
+    if (insertError) console.error("Message insert failed:", insertError);
   };
 
   const handleReact = async (id: string, reaction: string) => {
