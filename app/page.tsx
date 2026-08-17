@@ -136,7 +136,18 @@ export default function Home() {
         (payload) => {
           setMessages((prev) => {
             const newMsg = rowToMessage(payload.new as Record<string, unknown>);
-            // Avoid duplicate if we already added it optimistically
+            // Replace optimistic message from same author with same content
+            const optIndex = prev.findIndex(
+              (m) => m.id.startsWith("opt-") &&
+                m.author.username === newMsg.author.username &&
+                m.content === newMsg.content
+            );
+            if (optIndex !== -1) {
+              const next = [...prev];
+              next[optIndex] = newMsg;
+              return next;
+            }
+            // Avoid exact duplicate
             if (prev.some((m) => m.id === newMsg.id)) return prev;
             return [...prev, newMsg];
           });
