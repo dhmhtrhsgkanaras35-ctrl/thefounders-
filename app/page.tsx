@@ -136,18 +136,6 @@ export default function Home() {
         (payload) => {
           setMessages((prev) => {
             const newMsg = rowToMessage(payload.new as Record<string, unknown>);
-            // Replace optimistic message from same author with same content
-            const optIndex = prev.findIndex(
-              (m) => m.id.startsWith("opt-") &&
-                m.author.username === newMsg.author.username &&
-                m.content === newMsg.content
-            );
-            if (optIndex !== -1) {
-              const next = [...prev];
-              next[optIndex] = newMsg;
-              return next;
-            }
-            // Avoid exact duplicate
             if (prev.some((m) => m.id === newMsg.id)) return prev;
             return [...prev, newMsg];
           });
@@ -230,18 +218,6 @@ export default function Home() {
 
     const content = draft.trim() || "Shared an update.";
 
-    // Optimistic UI update
-    const optimisticId = `opt-${Date.now()}`;
-    const optimistic: MessageItem = {
-      id: optimisticId,
-      author: profile,
-      content,
-      timestamp: new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }),
-      image: draftImage || undefined,
-      links: draftLinks.length > 0 ? draftLinks : undefined,
-      reactions: { "👍": 0, "🔥": 0, "🎉": 0, "💡": 0 },
-    };
-    setMessages((prev) => [...prev, optimistic]);
     setDraft("");
     setDraftImage("");
     setDraftLinks([]);
