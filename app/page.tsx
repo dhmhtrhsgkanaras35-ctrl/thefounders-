@@ -10,12 +10,10 @@ import { ProfileCard } from "./components/ProfileCard";
 import { ProfileSetup } from "./components/ProfileSetup";
 import { Sidebar } from "./components/Sidebar";
 import { COUNTRIES, DEFAULT_PROFILE, SEED_MESSAGES } from "./lib/data";
+import { supabase } from "./lib/supabase";
 import type { CountryEntry, MessageItem, Profile, ProfileForm } from "./lib/types";
 
-const STORAGE = {
-  profile: "tf-profile-v2",
-  messages: "tf-messages-v2",
-};
+const STORAGE_KEY = "tf-profile-v2";
 
 function getInitials(name: string) {
   return name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase() || "GF";
@@ -36,10 +34,38 @@ function makeEmptyForm(p?: Profile): ProfileForm {
   };
 }
 
+// Convert a Supabase messages row → MessageItem
+function rowToMessage(row: Record<string, unknown>): MessageItem {
+  return {
+    id: String(row.id),
+    content: String(row.content ?? ""),
+    timestamp: new Date(String(row.created_at)).toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+    }),
+    reactions: (row.reactions as Record<string, number>) ?? { "👍": 0, "🔥": 0, "🎉": 0, "💡": 0 },
+    image: row.image ? String(row.image) : undefined,
+    links: Array.isArray(row.links) ? (row.links as string[]) : undefined,
+    author: {
+      name: String(row.author_name ?? "Anonymous"),
+      username: String(row.author_username ?? "anon"),
+      avatar: String(row.author_avatar ?? "GF"),
+      bio: row.author_bio ? String(row.author_bio) : undefined,
+      location: row.author_location ? String(row.author_location) : undefined,
+      website: row.author_website ? String(row.author_website) : undefined,
+      twitter: row.author_twitter ? String(row.author_twitter) : undefined,
+      linkedin: row.author_linkedin ? String(row.author_linkedin) : undefined,
+      github: row.author_github ? String(row.author_github) : undefined,
+      country: row.author_country ? String(row.author_country) : undefined,
+      joinedAt: row.author_joined_at ? String(row.author_joined_at) : undefined,
+    },
+  };
+}
+
 export default function Home() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [messages, setMessages] = useState<MessageItem[]>(SEED_MESSAGES);
-  const [countries, setCountries] = useState<CountryEntry[]>(COUNTRIES);
+  const [countries] = useState<CountryEntry[]>(COUNTRIES);
   const [draft, setDraft] = useState("");
   const [draftImage, setDraftImage] = useState("");
   const [draftLinks, setDraftLinks] = useState<string[]>([]);
@@ -49,12 +75,15 @@ export default function Home() {
   const [form, setForm] = useState<ProfileForm>(makeEmptyForm());
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("chat");
+  const [totalWaitlist, setTotalWaitlist] = useState(
+    COUNTRIES.filter((c) => c.status === "waitlist").reduce((s, c) => s + c.current, 0)
+  );
   const endRef = useRef<HTMLDivElement | null>(null);
 
-  // Load from localStorage on mount
+  // Load profile from localStorage
   useEffect(() => {
     try {
-      const stored = localStorage.getItem(STORAGE.profile);
+      const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
         const p = JSON.parse(stored) as Profile;
         setProfile(p);
@@ -63,8 +92,6 @@ export default function Home() {
         setIsNewUser(true);
         setShowSetup(true);
       }
-      const storedMsgs = localStorage.getItem(STORAGE.messages);
-      if (storedMsgs) setMessages(JSON.parse(storedMsgs));
     } catch {
       setIsNewUser(true);
       setShowSetup(true);
@@ -73,15 +100,68 @@ export default function Home() {
 
   // Persist profile
   useEffect(() => {
-    if (profile) localStorage.setItem(STORAGE.profile, JSON.stringify(profile));
+    if (profile) localStorage.setItem(STORAGE_KEY, JSON.stringify(profile));
   }, [profile]);
 
-  // Persist messages
+  // Load messages from Supabase + subscribe to realtime
   useEffect(() => {
-    if (messages.length > 0) localStorage.setItem(STORAGE.messages, JSON.stringify(messages));
-  }, [messages]);
+    async function loadMessages() {
+      const { data, error } = await supabase
+        .from("messages")
+        .select("*")
+        .order("created_at", { ascending: true })
+        .limit(100);
 
-  // Scroll to bottom on new message
+      if (!error && data && data.length > 0) {
+        setMessages(data.map(rowToMessage));
+      }
+      // If table is empty, SEED_MESSAGES stay as default
+    }
+
+    loadMessages();
+
+    // Realtime new messages
+    const channel = supabase
+      .channel("messages-realtime")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "messages" },
+        (payload) => {
+          setMessages((prev) => {
+            const newMsg = rowToMessage(payload.new as Record<string, unknown>);
+            // Avoid duplicate if we already added it optimistically
+            if (prev.some((m) => m.id === newMsg.id)) return prev;
+            return [...prev, newMsg];
+          });
+        }
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, []);
+
+  // Load real waitlist total
+  useEffect(() => {
+    async function loadWaitlistCount() {
+      const { count } = await supabase
+        .from("waitlist")
+        .select("*", { count: "exact", head: true });
+      if (count !== null && count > 0) setTotalWaitlist(count);
+    }
+    loadWaitlistCount();
+
+    // Realtime waitlist count
+    const channel = supabase
+      .channel("waitlist-total")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "waitlist" }, () => {
+        setTotalWaitlist((prev) => prev + 1);
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, []);
+
+  // Scroll to bottom
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -117,7 +197,7 @@ export default function Home() {
       github: form.github.trim(),
       country: form.country || "Greece",
       joinedAt: profile?.joinedAt ?? `Joined ${new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" })}`,
-      profileViews: profile?.profileViews ?? 0,
+      profileViews: (profile?.profileViews ?? 0) + 1,
       followers: profile?.followers ?? 0,
     };
 
@@ -127,31 +207,60 @@ export default function Home() {
     setIsNewUser(false);
   };
 
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if ((!draft.trim() && !draftImage && draftLinks.length === 0) || !profile) return;
 
-    const msg: MessageItem = {
-      id: `${Date.now()}`,
+    const content = draft.trim() || "Shared an update.";
+
+    // Optimistic UI update
+    const optimisticId = `opt-${Date.now()}`;
+    const optimistic: MessageItem = {
+      id: optimisticId,
       author: profile,
-      content: draft.trim() || "Shared an update.",
+      content,
       timestamp: new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }),
       image: draftImage || undefined,
       links: draftLinks.length > 0 ? draftLinks : undefined,
       reactions: { "👍": 0, "🔥": 0, "🎉": 0, "💡": 0 },
     };
-
-    setMessages((prev) => [...prev, msg]);
+    setMessages((prev) => [...prev, optimistic]);
     setDraft("");
     setDraftImage("");
     setDraftLinks([]);
+
+    // Persist to Supabase
+    await supabase.from("messages").insert({
+      content,
+      image: draftImage || null,
+      links: draftLinks.length > 0 ? draftLinks : null,
+      reactions: { "👍": 0, "🔥": 0, "🎉": 0, "💡": 0 },
+      author_name: profile.name,
+      author_username: profile.username,
+      author_avatar: profile.avatar,
+      author_bio: profile.bio ?? null,
+      author_location: profile.location ?? null,
+      author_website: profile.website ?? null,
+      author_twitter: profile.twitter ?? null,
+      author_linkedin: profile.linkedin ?? null,
+      author_github: profile.github ?? null,
+      author_country: profile.country ?? null,
+      author_joined_at: profile.joinedAt ?? null,
+    });
   };
 
-  const handleReact = (id: string, reaction: string) => {
+  const handleReact = async (id: string, reaction: string) => {
+    // Optimistic
     setMessages((prev) =>
       prev.map((m) =>
         m.id !== id ? m : { ...m, reactions: { ...m.reactions, [reaction]: (m.reactions[reaction] ?? 0) + 1 } }
       )
     );
+    // Persist — fetch current then update
+    const { data } = await supabase.from("messages").select("reactions").eq("id", id).single();
+    if (data) {
+      const updated = { ...(data.reactions as Record<string, number>), [reaction]: ((data.reactions as Record<string, number>)[reaction] ?? 0) + 1 };
+      await supabase.from("messages").update({ reactions: updated }).eq("id", id);
+    }
   };
 
   const handleDraftPhoto = (file?: File) => {
@@ -168,14 +277,6 @@ export default function Home() {
     setDraftLinks((prev) => prev.includes(normalized) ? prev : [...prev, normalized]);
   };
 
-  const handleJoinWaitlist = (country: string) => {
-    setCountries((prev) =>
-      prev.map((c) => c.country === country ? { ...c, current: c.current + 1 } : c)
-    );
-  };
-
-  const totalWaitlist = countries.filter((c) => c.status === "waitlist").reduce((s, c) => s + c.current, 0);
-
   return (
     <div className="flex h-screen overflow-hidden bg-[#f8fafc]">
       <Sidebar
@@ -186,15 +287,10 @@ export default function Home() {
       />
 
       <div className="relative flex min-w-0 flex-1 flex-col">
-        {/* Mobile nav */}
         <div className="lg:hidden">
-          <MobileNavigation
-            menuOpen={mobileMenuOpen}
-            onToggleMenu={() => setMobileMenuOpen((v) => !v)}
-          />
+          <MobileNavigation menuOpen={mobileMenuOpen} onToggleMenu={() => setMobileMenuOpen((v) => !v)} />
         </div>
 
-        {/* Mobile menu overlay */}
         {mobileMenuOpen && (
           <div className="fixed inset-0 z-30 bg-slate-950/40 lg:hidden" onClick={() => setMobileMenuOpen(false)}>
             <div className="h-full w-72 max-w-[80vw] bg-[#0b1220] p-4 text-slate-100 shadow-xl" onClick={(e) => e.stopPropagation()}>
@@ -211,7 +307,8 @@ export default function Home() {
                   { id: "countries", label: "Countries", icon: "🌍" },
                   { id: "members", label: "Members", icon: "👥" },
                 ].map((item) => (
-                  <button key={item.id} type="button" onClick={() => { setActiveTab(item.id); setMobileMenuOpen(false); }}
+                  <button key={item.id} type="button"
+                    onClick={() => { setActiveTab(item.id); setMobileMenuOpen(false); }}
                     className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium ${activeTab === item.id ? "bg-slate-800 text-white" : "text-slate-400"}`}>
                     <span>{item.icon}</span>{item.label}
                   </button>
@@ -225,7 +322,6 @@ export default function Home() {
           </div>
         )}
 
-        {/* Header */}
         <Header
           title="The Founders"
           subtitle="The global network for country-based founder communities"
@@ -249,36 +345,30 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Main content */}
         <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <div className="flex-1 overflow-y-auto px-3 py-4 sm:px-5 lg:px-6">
             <div className="mx-auto max-w-3xl space-y-4">
 
-              {/* Countries tab */}
               {activeTab === "countries" && (
-                <CountryGrid countries={countries} onJoinWaitlist={handleJoinWaitlist} />
+                <CountryGrid countries={countries} />
               )}
 
-              {/* Members tab */}
               {activeTab === "members" && (
-                <div className="rounded-3xl border border-slate-200 bg-white p-6 text-center shadow-sm">
-                  <p className="text-3xl">👥</p>
-                  <p className="mt-3 font-semibold text-slate-800">Members directory coming soon</p>
-                  <p className="mt-1 text-sm text-slate-500">Browse all 2,310 founders in the Greece community.</p>
+                <div className="rounded-3xl border border-slate-200 bg-white p-10 text-center shadow-sm">
+                  <p className="text-4xl">👥</p>
+                  <p className="mt-4 text-lg font-semibold text-slate-800">Members directory coming soon</p>
+                  <p className="mt-2 text-sm text-slate-500">Browse all 2,310 founders in the Greece community.</p>
                 </div>
               )}
 
-              {/* Chat tab */}
               {activeTab === "chat" && (
                 <>
-                  {/* Country cards pinned above chat */}
-                  <CountryGrid countries={countries} onJoinWaitlist={handleJoinWaitlist} />
+                  <CountryGrid countries={countries} />
 
-                  {/* Messages */}
                   <div className="rounded-3xl border border-slate-200 bg-white shadow-sm">
                     <div className="border-b border-slate-100 px-5 py-4">
                       <p className="text-sm font-semibold text-slate-800">🇬🇷 Greece — Community Chat</p>
-                      <p className="text-xs text-slate-500">Open to all Greek founders</p>
+                      <p className="text-xs text-slate-500">Live · messages sync in real time</p>
                     </div>
                     <div className="divide-y divide-slate-100 px-2 py-2">
                       {messages.map((msg) => (
@@ -292,7 +382,6 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Composer — only shown in chat */}
           {activeTab === "chat" && (
             <MessageComposer
               value={draft}
@@ -308,12 +397,10 @@ export default function Home() {
         </main>
       </div>
 
-      {/* Profile card modal */}
       {selectedProfile && (
         <ProfileCard profile={selectedProfile} onClose={() => setSelectedProfile(null)} />
       )}
 
-      {/* Profile setup modal */}
       {showSetup && (
         <ProfileSetup
           form={form}
